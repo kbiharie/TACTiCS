@@ -1,0 +1,18 @@
+# Data extensions
+*.pkl
+*.fasta*
+*.h5ad
+*.tsv
+*.txt
+*.csv
+*.xlsx
+*.png
+*.out
+*.pdf
+*.tab
+*.db*
+
+# IDE
+*.idea/
+*.ipynb_checkpoints/
+*__pycache__/
