@@ -17,17 +17,17 @@ def embed_proteins(species_dict,
                    protein_to_gene=lambda x: x.id  # [Bio.SeqRecord --> str] map record to gene name,
                    # or False to skip record
                    ):
-    assert "sequence_path" in species_dict, "dictionary doesn't contain 'sequence_path'"
+    assert "sequences" in species_dict, "dictionary doesn't contain 'sequences'"
     logging.set_verbosity_error()
 
     # record to gene name, if False --> protein sequence is skipped
-    sequence_path = species_dict["sequence_path"]
+    sequence_path = species_dict["sequences"]
 
-    if "embedding_path" in species_dict:
-        embedding_path = species_dict["embedding_path"]
+    if "embeddings" in species_dict:
+        embedding_path = species_dict["embeddings"]
     else:
         embedding_path = sequence_path.split(".")[0] + "_embeddings.pkl"
-        species_dict["embedding_path"] = embedding_path
+        species_dict["embeddings"] = embedding_path
 
     model = BertModel.from_pretrained(model_path)
     if torch.cuda.is_available():
@@ -93,12 +93,12 @@ def embed_proteins(species_dict,
     df.to_pickle(embedding_path)
 
 
-def match_genes(species_dict_A, species_dict_B, match_path, threshold=0.005):
-    assert "embedding_path" in species_dict_A, "dictionary doesn't contain 'embedding_path'"
-    assert "embedding_path" in species_dict_B, "dictionary doesn't contain 'embedding_path'"
+def calc_dist(species_dict_A, species_dict_B, match_path, threshold=0.005):
+    assert "embeddings" in species_dict_A, "dictionary doesn't contain 'embeddings'"
+    assert "embeddings" in species_dict_B, "dictionary doesn't contain 'embeddings'"
 
-    emb_df_A = pd.read_pickle(species_dict_A["embedding_path"])
-    emb_df_B = pd.read_pickle(species_dict_B["embedding_path"])
+    emb_df_A = pd.read_pickle(species_dict_A["embeddings"])
+    emb_df_B = pd.read_pickle(species_dict_B["embeddings"])
 
     dist_matrix = scipy.spatial.distance.cdist(emb_df_A.to_numpy(), emb_df_B.to_numpy(), metric="cosine")
 

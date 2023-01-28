@@ -30,8 +30,8 @@ class TACTiCS:
         with open(match_path, "rb") as f:
             proteins_A, proteins_B, self.gene_matches = pickle.load(f)  # is it necessary to store gene_matches in self?
 
-        self.adata_A = scanpy.read_h5ad(dict_A["counts_path"])
-        self.adata_B = scanpy.read_h5ad(dict_B["counts_path"])
+        self.adata_A = scanpy.read_h5ad(dict_A["counts"])
+        self.adata_B = scanpy.read_h5ad(dict_B["counts"])
 
         # Remove matches from genes that are not in adata_A or adata_B
         if type(self.gene_matches) is not scipy.sparse.coo_matrix:
@@ -162,29 +162,8 @@ class TACTiCS:
     def plot_matches(self):
         plt.rcParams["savefig.bbox"] = "tight"
 
-        labels_A = set(self.adata_A.obs[self.dict_A["column"]].cat.categories)
-        labels_B = set(self.adata_B.obs[self.dict_B["column"]].cat.categories)
-        labels = np.array(sorted(list(labels_A.union(labels_B))))
-        idx_A = [i for i in range(len(labels)) if labels[i] in set(labels_A)]
-        idx_B = [i for i in range(len(labels)) if labels[i] in set(labels_B)]
-        labels_A = labels[idx_A]
-        labels_B = labels[idx_B]
-
-        y_A = self.adata_A.obs[self.dict_A["column"]].values
-        transfer_A = self.adata_A.obs[self.dict_B["name"]].values
-        y_B = self.adata_B.obs[self.dict_B["column"]].values
-        transfer_B = self.adata_B.obs[self.dict_A["name"]].values
-
-        conf_matrix_A = sklearn.metrics.confusion_matrix(y_A, transfer_A, normalize="true", labels=labels)
-        conf_matrix_A = conf_matrix_A[idx_A, :]
-        conf_matrix_A = conf_matrix_A[:, idx_B]
-
-        conf_matrix_B = sklearn.metrics.confusion_matrix(y_B, transfer_B, normalize="true", labels=labels)
-        conf_matrix_B = conf_matrix_B[idx_B, :]
-        conf_matrix_B = conf_matrix_B[:, idx_A]
-
-        conf_matrix_AB = np.mean([conf_matrix_A, conf_matrix_B.T], axis=0)
-        sns.heatmap(conf_matrix_AB, cmap="PuRd", linecolor="white", linewidths=0.1, vmin=0, vmax=1, square=True,
+        labels_A, labels_B, matrix = self.get_avg_conf()
+        sns.heatmap(matrix, cmap="PuRd", linecolor="white", linewidths=0.1, vmin=0, vmax=1, square=True,
                     cbar=True)
         plt.xticks([x + 0.5 for x in range(len(labels_B))], labels_B, rotation=-90)
         plt.yticks([x + 0.5 for x in range(len(labels_A))], labels_A, rotation=0)
@@ -235,6 +214,58 @@ class TACTiCS:
 
         self.model.load_state_dict(torch.load(os.path.join(folder, "model.pth")))
         self.optimizer.load_state_dict(torch.load(os.path.join(folder, "optim.pth")))
+
+    def get_avg_conf(self):
+        labels_A = set(self.adata_A.obs[self.dict_A["column"]].cat.categories)
+        labels_B = set(self.adata_B.obs[self.dict_B["column"]].cat.categories)
+        labels = np.array(sorted(list(labels_A.union(labels_B))))
+        idx_A = [i for i in range(len(labels)) if labels[i] in set(labels_A)]
+        idx_B = [i for i in range(len(labels)) if labels[i] in set(labels_B)]
+        labels_A = labels[idx_A]
+        labels_B = labels[idx_B]
+
+        y_A = self.adata_A.obs[self.dict_A["column"]].values
+        transfer_A = self.adata_A.obs[self.dict_B["name"]].values
+        y_B = self.adata_B.obs[self.dict_B["column"]].values
+        transfer_B = self.adata_B.obs[self.dict_A["name"]].values
+
+        conf_matrix_A = sklearn.metrics.confusion_matrix(y_A, transfer_A, normalize="true", labels=labels)
+        conf_matrix_A = conf_matrix_A[idx_A, :]
+        conf_matrix_A = conf_matrix_A[:, idx_B]
+
+        conf_matrix_B = sklearn.metrics.confusion_matrix(y_B, transfer_B, normalize="true", labels=labels)
+        conf_matrix_B = conf_matrix_B[idx_B, :]
+        conf_matrix_B = conf_matrix_B[:, idx_A]
+
+        conf_matrix_AB = np.mean([conf_matrix_A, conf_matrix_B.T], axis=0)
+        return labels_A, labels_B, conf_matrix_AB
+
+    def get_ADS(self):
+        labels_A, labels_B, matrix = self.get_avg_conf()
+        idx_A = [labels_A[i] in labels_B for i in range(len(labels_A))]
+        idx_B = [labels_B[i] in labels_A for i in range(len(labels_B))]
+
+        matrix = matrix[idx_A, :]
+        matrix = matrix[:, idx_B]
+
+        print("ADS:", matrix.diagonal().mean())
+
+    def get_recall(self):
+        labels_A, labels_B, matrix = self.get_avg_conf()
+        correct = 0
+        total = len(set(labels_A).intersection(labels_B))
+        for i in range(len(labels_A)):
+            if labels_A[i] not in labels_B:
+                continue
+            j = np.where(labels_B == labels_A[i])
+            if matrix[i, j] == matrix[i, :].max() and matrix[i, j] == matrix[:, j].max():
+                correct += 1
+
+        if total == 0:
+            print("No common cell types")
+            return
+
+        print("Recall:", correct/total, f"{correct}/{total}")
 
 
 class TACTiCSNet(torch.nn.Module):
