@@ -28,7 +28,7 @@ class TACTiCS:
         self.dict_A, self.dict_B = dict_A, dict_B
 
         with open(match_path, "rb") as f:
-            proteins_A, proteins_B, self.gene_matches = pickle.load(f)  # is it necessary to store gene_matches in self?
+            proteins_A, proteins_B, self.gene_matches = pickle.load(f)
 
         self.adata_A = scanpy.read_h5ad(dict_A["counts"])
         self.adata_B = scanpy.read_h5ad(dict_B["counts"])

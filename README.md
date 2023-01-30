@@ -16,4 +16,4 @@ TACTiCS requires PyTorch. The transformers package is only necessary for embeddi
 The `tutorial.ipynb` notebook explains step-by-step how to use TACTiCS for a comparison across two species, including how to create protein sequence embeddings. 
 
 ### Datasets
-All datasets used are publicly available. For convenience, the protein sequences, protein embeddings, raw count data and trained models for 50k subsets of the data can be found on [Zonodo](link). The full unprocessed dataset can be downloaded [here](https://doi.org/10.5281/zenodo.6786357).
+All datasets used are publicly available. For convenience, the protein sequences, protein embeddings, raw count data and trained models for 50k subsets of the data can be found on [Zenodo](https://doi.org/10.5281/zenodo.7582460). The full unprocessed dataset can be downloaded [here](https://doi.org/10.5281/zenodo.6786357).

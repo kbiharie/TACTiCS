@@ -36,13 +36,11 @@ def embed_proteins(species_dict,
     tokenizer = BertTokenizer.from_pretrained(model_path, do_lower_case=False, padding=True, max_length=max_length,
                                               truncation="longest_first")
 
-    records = list(SeqIO.parse(sequence_path, "fasta"))[:100]
+    records = list(SeqIO.parse(sequence_path, "fasta"))
     n_records = len(records)
     sequences = [str(record.seq)[:max_length] for record in records]
     lengths = [len(sequence) for sequence in sequences]
     names = list(map(protein_to_gene, records))
-    for i in range(10, 20):
-        names[i] = False
 
     names, sequences = map(list, zip(*sorted(filter(lambda x: x[0] is not False, zip(names, sequences)),
                                              key=lambda x: len(x[1]), reverse=True)))
@@ -110,3 +108,40 @@ def calc_dist(species_dict_A, species_dict_B, match_path, threshold=0.005):
         pickle.dump([emb_df_A.index.values, emb_df_B.index.values, dist_matrix], f)
 
     print("gene matches saved to", match_path)
+
+
+def calc_dist_blast(A_to_B_path, B_to_A_path, match_path, threshold=1e-6):
+    n1n2 = pd.read_csv(A_to_B_path, sep="\t", header=None)
+    n2n1 = pd.read_csv(B_to_A_path, sep="\t", header=None)
+    data = {}
+
+    for i, entry in n1n2.iterrows():
+        gene_A = entry[0]
+        gene_B = entry[1]
+        value = entry[11]
+        if entry[10] < threshold:
+            data[(gene_A, gene_B)] = value
+
+    for i, entry in n2n1.iterrows():
+        gene_B = entry[0]
+        gene_A = entry[1]
+        value = entry[11]
+        if entry[10] < threshold:
+            if (gene_A, gene_B) in data:
+                data[(gene_A, gene_B)] = (data[(gene_A, gene_B)] + value) / 2
+            else:
+                data[(gene_A, gene_B)] = value
+
+    keys, items = data.keys(), data.values()
+    row, col = map(list, zip(*keys))
+
+    genes_A = sorted(list(set(row)))
+    genes_B = sorted(list(set(col)))
+
+    row = [genes_A.index(x) for x in row]
+    col = [genes_B.index(x) for x in col]
+
+    dist_matrix = scipy.sparse.coo_matrix((list(items), (row, col)), shape=(len(genes_A), len(genes_B)), dtype=float)
+
+    with open(match_path, "wb") as f:
+        pickle.dump([genes_A, genes_B, dist_matrix], f)
