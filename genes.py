@@ -1,10 +1,10 @@
+import numpy as np
 import torch
-from transformers import BertTokenizer, BertModel, pipeline
+from transformers import BertTokenizer, BertModel, logging
 from Bio import SeqIO
 import time
 import pandas as pd
 import tqdm
-from transformers import logging
 import scipy
 import pickle
 
@@ -142,6 +142,29 @@ def calc_dist_blast(A_to_B_path, B_to_A_path, match_path, threshold=1e-6):
     col = [genes_B.index(x) for x in col]
 
     dist_matrix = scipy.sparse.coo_matrix((list(items), (row, col)), shape=(len(genes_A), len(genes_B)), dtype=float)
+
+    with open(match_path, "wb") as f:
+        pickle.dump([genes_A, genes_B, dist_matrix], f)
+
+def calc_dist_blast11(A_to_B_path, B_to_A_path, match_path, threshold=1e-6):
+    n1n2 = pd.read_csv(A_to_B_path, sep="\t", header=None)
+    n2n1 = pd.read_csv(B_to_A_path, sep="\t", header=None)
+    n1n2 = n1n2[n1n2[10] < threshold]
+    n2n1 = n2n1[n2n1[10] < threshold]
+
+    n1n2 = n1n2.groupby(0).head(1)
+    n1n2 = n1n2.set_index(0)
+    n2n1 = n2n1.groupby(0).head(1)
+    n2n1 = n2n1.set_index(0)
+
+    blast_11 = n1n2[n1n2[1].isin(n2n1.index)]
+    blast_11 = blast_11[blast_11.index == n2n1.loc[blast_11[1]][1]]
+    blast_11 = blast_11.sort_index()
+
+    genes_A = list(blast_11.index)
+    genes_B = list(blast_11[1].values)
+
+    dist_matrix = scipy.sparse.coo_matrix(np.diag(np.ones(len(genes_A))))
 
     with open(match_path, "wb") as f:
         pickle.dump([genes_A, genes_B, dist_matrix], f)

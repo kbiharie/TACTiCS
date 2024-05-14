@@ -23,8 +23,6 @@ class TACTiCS:
 
         assert dict_A is not None and dict_B is not None and match_path is not None
 
-        utils.check_species_dict(dict_A)
-        utils.check_species_dict(dict_B)
         self.dict_A, self.dict_B = dict_A, dict_B
 
         with open(match_path, "rb") as f:
@@ -33,37 +31,103 @@ class TACTiCS:
         self.adata_A = scanpy.read_h5ad(dict_A["counts"])
         self.adata_B = scanpy.read_h5ad(dict_B["counts"])
 
-        # Remove matches from genes that are not in adata_A or adata_B
+        def filter_cells(adata, adata_dict):
+            if "filter_column" in adata_dict and "filter_values" in adata_dict:
+                if adata_dict["filter_column"] is None or adata_dict["filter_values"] is None:
+                    return adata
+                return adata[adata.obs[adata_dict["filter_column"]].isin(adata_dict["filter_values"])]
+            return adata
+
+        self.adata_A = filter_cells(self.adata_A, self.dict_A)
+        self.adata_B = filter_cells(self.adata_B, self.dict_B)
+
+        def filter_entries(entry_to_genes, adata):
+            gene_to_entry = entry_to_genes.explode("Gene Names")
+            gene_to_entry["Entry"] = gene_to_entry.index
+            gene_to_entry = gene_to_entry.set_index("Gene Names")
+            gene_to_entry = gene_to_entry.sort_values(["Reviewed", "Entry"])
+            gene_to_entry = gene_to_entry[~gene_to_entry.index.duplicated(keep="first")]
+            gene_to_entry = gene_to_entry[gene_to_entry.index.isin(adata.var_names)]
+
+            gene_to_entry = gene_to_entry.sort_index()
+            genes = gene_to_entry.index.values
+
+            entry_to_gene_idx = {}
+            for i, entry in enumerate(gene_to_entry["Entry"]):
+                if entry not in entry_to_gene_idx:
+                    entry_to_gene_idx[entry] = []
+                entry_to_gene_idx[entry].append(i)
+
+            return genes, entry_to_gene_idx
+
+        if "genes" in self.dict_A:
+            names_A = pd.read_pickle(self.dict_A["genes"])
+            adata_genes_A, entry_to_gene_A = filter_entries(names_A, self.adata_A)
+        else:
+            adata_genes_A = sorted(list(set(self.adata_A.var_names).intersection(set(proteins_A))))
+            entry_to_gene_A = {}
+            for protein in proteins_A:
+                if protein in adata_genes_A:
+                    entry_to_gene_A[protein] = [adata_genes_A.index(protein)]
+        
+        if "genes" in self.dict_B:
+            names_B = pd.read_pickle(self.dict_B["genes"])
+            adata_genes_B, entry_to_gene_B = filter_entries(names_B, self.adata_B)
+        else:
+            adata_genes_B = sorted(list(set(self.adata_B.var_names).intersection(set(proteins_B))))
+            entry_to_gene_B = {}
+            for protein in proteins_B:
+                if protein in adata_genes_B:
+                    entry_to_gene_B[protein] = [adata_genes_B.index(protein)]
+
         if type(self.gene_matches) is not scipy.sparse.coo_matrix:
             self.gene_matches = scipy.sparse.coo_matrix(self.gene_matches)
+
+        rows = []
+        cols = []
+        data = []
         for i in range(len(self.gene_matches.data)):
-            if proteins_A[self.gene_matches.row[i]] not in self.adata_A.var_names or \
-                    proteins_B[self.gene_matches.col[i]] not in self.adata_B.var_names or \
-                    self.gene_matches.data[i] < 0.995:
-                self.gene_matches.data[i] = 0
-        self.gene_matches.eliminate_zeros()
+            protein_A = proteins_A[self.gene_matches.row[i]]
+            protein_B = proteins_B[self.gene_matches.col[i]]
+            if protein_A in entry_to_gene_A and protein_B in entry_to_gene_B:
+                for row in entry_to_gene_A[protein_A]:
+                    for col in entry_to_gene_B[protein_B]:
+                        rows.append(row)
+                        cols.append(col)
+                        data.append(self.gene_matches.data[i])
+
+        self.gene_matches = scipy.sparse.coo_matrix((data, (rows, cols)), shape=(len(adata_genes_A), len(adata_genes_B)))
+
+        # # Remove matches from genes that are not in adata_A or adata_B
+        # if type(self.gene_matches) is not scipy.sparse.coo_matrix:
+        #     self.gene_matches = scipy.sparse.coo_matrix(self.gene_matches)
+        # for i in range(len(self.gene_matches.data)):
+        #     if proteins_A[self.gene_matches.row[i]] not in self.adata_A.var_names or \
+        #             proteins_B[self.gene_matches.col[i]] not in self.adata_B.var_names:
+        #         self.gene_matches.data[i] = 0
+        # self.gene_matches.eliminate_zeros()
 
         # Filter gene matches top-5
         k = 5
-        utils.filter_top_k(self.gene_matches, k)
+        self.gene_matches = utils.filter_top_k(self.gene_matches, k)
 
         # Normalize counts and calculate highly variable genes
-        self.adata_A = self.norm_adata(self.adata_A, proteins_A)
-        self.adata_B = self.norm_adata(self.adata_B, proteins_B)
+        self.adata_A = self.norm_adata(self.adata_A, adata_genes_A)
+        self.adata_B = self.norm_adata(self.adata_B, adata_genes_B)
 
         # Filter gene matches to highly variable genes + matches
         self.gene_matches = scipy.sparse.coo_matrix(self.gene_matches)
         for i in range(len(self.gene_matches.data)):
-            if not self.adata_A.var.highly_variable.loc[proteins_A[self.gene_matches.row[i]]] and \
-                    not self.adata_B.var.highly_variable.loc[proteins_B[self.gene_matches.col[i]]]:
+            if not self.adata_A.var.highly_variable.loc[adata_genes_A[self.gene_matches.row[i]]] and \
+                    not self.adata_B.var.highly_variable.loc[adata_genes_B[self.gene_matches.col[i]]]:
                 self.gene_matches.data[i] = 0
         self.gene_matches.eliminate_zeros()
 
-        genes_A = sorted([proteins_A[i] for i in set(self.gene_matches.row)])
-        genes_B = sorted([proteins_B[i] for i in set(self.gene_matches.col)])
+        genes_A = sorted([adata_genes_A[i] for i in set(self.gene_matches.row)])
+        genes_B = sorted([adata_genes_B[i] for i in set(self.gene_matches.col)])
 
-        genes_idx_A = [genes_A.index(x) if x in genes_A else -1 for x in proteins_A]
-        genes_idx_B = [genes_B.index(x) if x in genes_B else -1 for x in proteins_B]
+        genes_idx_A = [genes_A.index(x) if x in genes_A else -1 for x in adata_genes_A]
+        genes_idx_B = [genes_B.index(x) if x in genes_B else -1 for x in adata_genes_B]
 
         gene_matches_new = torch.zeros((len(genes_A), len(genes_B)), dtype=torch.float32)
         for i in range(len(self.gene_matches.data)):
@@ -90,7 +154,7 @@ class TACTiCS:
         self.model.apply(utils.init_weights)
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=0.001, weight_decay=0.01)
 
-    def train(self, n_epochs=200):
+    def train(self, n_epochs=200, batch_size=5000):
         self.model.train()
         self.model.cuda()
 
@@ -103,8 +167,8 @@ class TACTiCS:
             for batch in range(30):
                 self.optimizer.zero_grad()
 
-                x_A, y_A = utils.get_batch(self.adata_A, self.dict_A["column"], 5000)
-                x_B, y_B = utils.get_batch(self.adata_B, self.dict_B["column"], 5000)
+                x_A, y_A = utils.get_batch(self.adata_A, self.dict_A["column"], batch_size)
+                x_B, y_B = utils.get_batch(self.adata_B, self.dict_B["column"], batch_size)
 
                 x_A, y_A = x_A.cuda(), y_A.cuda()
                 x_B, y_B = x_B.cuda(), y_B.cuda()
@@ -159,17 +223,16 @@ class TACTiCS:
         del adata.uns["hvg"]
         return adata
 
-    def plot_matches(self):
+    def plot_matches(self, include_counts=False):
         plt.rcParams["savefig.bbox"] = "tight"
 
-        labels_A, labels_B, matrix = self.get_avg_conf()
+        labels_A, labels_B, matrix = self.get_avg_conf(include_counts)
         sns.heatmap(matrix, cmap="PuRd", linecolor="white", linewidths=0.1, vmin=0, vmax=1, square=True,
                     cbar=True)
         plt.xticks([x + 0.5 for x in range(len(labels_B))], labels_B, rotation=-90)
         plt.yticks([x + 0.5 for x in range(len(labels_A))], labels_A, rotation=0)
         plt.xlabel(self.dict_B["name"])
         plt.ylabel(self.dict_A["name"])
-        plt.show()
 
     def plot_embeddings(self):
         new_X = np.concatenate([self.adata_A.obsm["emb"], self.adata_B.obsm["emb"]], axis=0)
@@ -215,7 +278,13 @@ class TACTiCS:
         self.model.load_state_dict(torch.load(os.path.join(folder, "model.pth")))
         self.optimizer.load_state_dict(torch.load(os.path.join(folder, "optim.pth")))
 
-    def get_avg_conf(self):
+    def get_avg_conf(self, include_counts=False):
+        labels_A, labels_B, conf_matrix_A, conf_matrix_B = self.get_directional_conf(include_counts)
+        conf_matrix_AB = np.mean([conf_matrix_A, conf_matrix_B.T], axis=0)
+        return labels_A, labels_B, conf_matrix_AB
+
+
+    def get_directional_conf(self, include_counts=False):
         labels_A = set(self.adata_A.obs[self.dict_A["column"]].cat.categories)
         labels_B = set(self.adata_B.obs[self.dict_B["column"]].cat.categories)
         labels = np.array(sorted(list(labels_A.union(labels_B))))
@@ -229,6 +298,10 @@ class TACTiCS:
         y_B = self.adata_B.obs[self.dict_B["column"]].values
         transfer_B = self.adata_B.obs[self.dict_A["name"]].values
 
+        if include_counts:
+            labels_A = [f"{x} ({self.adata_A.obs[self.dict_A['column']].value_counts().loc[x]})" for x in labels_A]
+            labels_B = [f"{x} ({self.adata_B.obs[self.dict_B['column']].value_counts().loc[x]})" for x in labels_B]
+
         conf_matrix_A = sklearn.metrics.confusion_matrix(y_A, transfer_A, normalize="true", labels=labels)
         conf_matrix_A = conf_matrix_A[idx_A, :]
         conf_matrix_A = conf_matrix_A[:, idx_B]
@@ -237,13 +310,12 @@ class TACTiCS:
         conf_matrix_B = conf_matrix_B[idx_B, :]
         conf_matrix_B = conf_matrix_B[:, idx_A]
 
-        conf_matrix_AB = np.mean([conf_matrix_A, conf_matrix_B.T], axis=0)
-        return labels_A, labels_B, conf_matrix_AB
+        return labels_A, labels_B, conf_matrix_A, conf_matrix_B
 
     def get_ADS(self):
         labels_A, labels_B, matrix = self.get_avg_conf()
-        idx_A = [labels_A[i] in labels_B for i in range(len(labels_A))]
-        idx_B = [labels_B[i] in labels_A for i in range(len(labels_B))]
+        idx_A = [labels_A[i] in labels_B and labels_A[i] != "NA" for i in range(len(labels_A))]
+        idx_B = [labels_B[i] in labels_A and labels_B[i] != "NA" for i in range(len(labels_B))]
 
         matrix = matrix[idx_A, :]
         matrix = matrix[:, idx_B]
@@ -256,6 +328,9 @@ class TACTiCS:
         total = len(set(labels_A).intersection(labels_B))
         for i in range(len(labels_A)):
             if labels_A[i] not in labels_B:
+                continue
+            if labels_A[i] == "NA":
+                total -= 1
                 continue
             j = np.where(labels_B == labels_A[i])
             if matrix[i, j] == matrix[i, :].max() and matrix[i, j] == matrix[:, j].max():

@@ -52,7 +52,7 @@ def filter_top_k(matrix, k, dim=None):
         filter_top_k(matrix, k, 0)
         matrix = scipy.sparse.csc_matrix(matrix)  # column-wise
         filter_top_k(matrix, k, 1)
-        return
+        return matrix
 
     for i in range(matrix.shape[dim]):  # for every row
         values = matrix.data[matrix.indptr[i]:matrix.indptr[i + 1]]
@@ -64,6 +64,8 @@ def filter_top_k(matrix, k, dim=None):
                     k]  # get the value of the k+1th item, so we only take indices > value: enforces a strict maximum.
                 values[values <= min_value] = 0
     matrix.eliminate_zeros()
+
+    return matrix
 
 
 def init_weights(m):
